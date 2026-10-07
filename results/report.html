@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Experimento SOM + DTW — Similaridade de perfis</title>
+<style>
+body { font-family: Arial, sans-serif; max-width: 1050px; margin: 40px auto; padding: 0 20px; line-height: 1.5; color: #202124; }
+h1, h2 { margin-bottom: 8px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 20px 0 30px; }
+.card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; background: #fafafa; }
+.card strong { display: block; font-size: 13px; margin-bottom: 8px; }
+.card span { font-size: 22px; font-weight: 700; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0 30px; }
+th, td { border-bottom: 1px solid #ddd; padding: 8px; text-align: left; }
+.note { background: #f4f6f8; border-left: 4px solid #555; padding: 14px; }
+</style>
+</head>
+<body>
+<h1>Experimento pequeno: preservação de similaridade após redução por SOM</h1>
+<p>Dados reais de perfilagem do conjunto público de fácies da SEG (2016). Foram usados 12 segmentos, 16 amostras por segmento, três fácies e três curvas: GR, PHIND e PE.</p>
+
+<div class="grid">
+<div class="card"><strong>Acurácia NN — original</strong><span>58.3%</span></div>
+<div class="card"><strong>Acurácia NN — SOM (30 execuções)</strong><span>48.6% ± 8.2%</span></div>
+<div class="card"><strong>Correlação das distâncias</strong><span>0.758 ± 0.062</span></div>
+<div class="card"><strong>Speedup aproximado</strong><span>1.50×</span></div>
+</div>
+
+<h2>Por que 30 execuções?</h2>
+<p>O treinamento do SOM envolve inicialização e amostragem aleatórias. Por isso, o experimento é repetido com 30 sementes diferentes e os resultados do espaço reduzido são apresentados como média ± desvio-padrão. Isso evita escolher uma execução excepcionalmente favorável.</p>
+
+<h2>Resultados principais</h2>
+<table>
+<thead><tr><th>Métrica</th><th>Original</th><th>SOM reduzido</th></tr></thead>
+<tbody>
+<tr><td>Acurácia do vizinho mais próximo por fácies</td><td>0.583</td><td>0.486 ± 0.082</td></tr>
+<tr><td>Razão de separação</td><td>1.367</td><td>2.543 ± 0.360</td></tr>
+<tr><td>Correlação com a matriz original</td><td>1,000</td><td>0.758 ± 0.062</td></tr>
+<tr><td>Tempo da matriz de distâncias</td><td>139.5 ms</td><td>92.8 ± 9.4 ms</td></tr>
+</tbody>
+</table>
+
+<h2>Interpretação</h2>
+<p>A redução por SOM preservou parcialmente a estrutura global de distâncias: a correlação média com a matriz original foi positiva e relativamente alta. A razão de separação entre fácies aumentou no espaço reduzido, mas a acurácia do vizinho mais próximo apresentou variabilidade entre execuções e, em média, não superou o baseline original. Portanto, o resultado não sustenta a afirmação de que o SOM melhora consistentemente a identificação do vizinho mais próximo neste recorte.</p>
+
+<div class="note">Conclusão segura: o experimento oferece evidência de que a representação reduzida pode preservar parte da estrutura de similaridade e diminuir o custo da comparação, mas a qualidade de vizinhança depende da inicialização do SOM. É uma prova de conceito, não uma validação geológica geral.</div>
+
+<h2>Segmentos usados</h2>
+<table><thead><tr><th>Segmento</th><th>Poço</th><th>Formação</th><th>Fácies</th></tr></thead><tbody><tr><td>F2_SHRIMPLIN</td><td>SHRIMPLIN</td><td>B4 SH</td><td>2</td></tr><tr><td>F2_NEWBY</td><td>NEWBY</td><td>C SH</td><td>2</td></tr><tr><td>F2_NOLAN</td><td>NOLAN</td><td>B3 SH</td><td>2</td></tr><tr><td>F2_CROSS_H_CATTLE</td><td>CROSS H CATTLE</td><td>B1 SH</td><td>2</td></tr><tr><td>F3_SHANKLE</td><td>SHANKLE</td><td>C SH</td><td>3</td></tr><tr><td>F3_SHRIMPLIN</td><td>SHRIMPLIN</td><td>C SH</td><td>3</td></tr><tr><td>F3_LUKE_G_U</td><td>LUKE G U</td><td>C SH</td><td>3</td></tr><tr><td>F3_NEWBY</td><td>NEWBY</td><td>B1 SH</td><td>3</td></tr><tr><td>F6_NEWBY</td><td>NEWBY</td><td>C LM</td><td>6</td></tr><tr><td>F6_SHRIMPLIN</td><td>SHRIMPLIN</td><td>A1 LM</td><td>6</td></tr><tr><td>F6_SHANKLE</td><td>SHANKLE</td><td>C LM</td><td>6</td></tr><tr><td>F6_LUKE_G_U</td><td>LUKE G U</td><td>C LM</td><td>6</td></tr></tbody></table>
+</body>
+</html>

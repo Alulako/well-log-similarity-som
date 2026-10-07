@@ -1,0 +1,9 @@
+metric,original_value,reduced_mean,reduced_std
+nn_accuracy_original,0.583333,,
+nn_accuracy_reduced,,0.486111,0.082127
+separation_ratio_original,1.366614,,
+separation_ratio_reduced,,2.543007,0.359917
+distance_correlation_reduced,,0.758011,0.062262
+runtime_original_ms,139.453620,,
+runtime_reduced_ms,,92.788167,9.358138
+speedup,1.502925,,
