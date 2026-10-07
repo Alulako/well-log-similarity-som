@@ -2,56 +2,40 @@
 
 ## Pergunta testada
 
-Uma representação reduzida baseada em SOM consegue preservar relações úteis de similaridade entre segmentos de perfis de poços e reduzir o custo da comparação?
+Uma representação reduzida baseada em SOM consegue preservar relações úteis de similaridade entre segmentos de perfis de poços e reduzir o custo da etapa de comparação?
 
-## Dados
+## Dados e recorte
 
-Foram usados 12 segmentos reais retirados do conjunto público da SEG (2016):
+Foram usados 12 segmentos reais do conjunto público da SEG: 3 fácies, 4 segmentos por fácies, 16 amostras por segmento e 3 curvas (GR, PHIND e PE).
 
-- 3 fácies: 2, 3 e 6;
-- 4 segmentos por fácies;
-- 16 amostras por segmento;
-- 3 curvas: GR, PHIND e PE;
-- 192 linhas no total.
-
-Os rótulos de fácies foram usados apenas como referência externa de avaliação.
+Os rótulos de fácies foram usados **na seleção do recorte e na avaliação**, mas não entram como atributos nem como alvos do treinamento do SOM. O recorte é estratificado e deliberadamente pequeno. Vizinhos do mesmo poço são permitidos porque o objetivo é estudar a geometria deste conjunto fixo, não estimar desempenho em poços novos.
 
 ## Comparações
 
-**Baseline:** dados originais padronizados com três variáveis, comparados por DTW multivariado.
-
-**Representação reduzida:** dados transformados por um SOM 1D de 8 neurônios e comparados por DTW 1D.
-
-Como o SOM possui componentes aleatórios, foram realizadas **30 execuções com sementes diferentes (0 a 29)**. Para o espaço reduzido, os resultados são apresentados como média ± desvio-padrão.
+- Baseline: três curvas padronizadas + DTW multivariado dependente.
+- Redução: SOM 1D com 8 neurônios + DTW 1D.
+- O SOM é repetido 30 vezes, com sementes de 0 a 29.
+- O DTW usa **custo acumulado**, sem normalização pelo comprimento do caminho.
+- O tempo reportado mede **somente a construção da matriz de distâncias com as representações já disponíveis**; treinamento e transformação do SOM ficam fora do cronômetro.
 
 ## Resultados
 
-| Métrica | Original | SOM reduzido — 30 execuções |
+| Métrica | Original | SOM reduzido — média ± DP |
 |---|---:|---:|
-| Acurácia do vizinho mais próximo por fácies | 58,3% | 48,6% ± 8,2% |
-| Razão de separação | 1,367 | 2,543 ± 0,360 |
-| Correlação com a matriz original | 1,000 | 0,758 ± 0,062 |
+| Acurácia do vizinho mais próximo por fácies (empates fracionados) | 50.0% | 49.6% ± 5.6% |
+| Acordo com o primeiro vizinho do baseline (empates fracionados) | — | 60.7% ± 6.3% |
+| Razão de separação inter/intrafácies | 1.301 | 1.954 ± 0.177 |
+| Correlação de Pearson entre distâncias e baseline | 1,000 | 0.754 ± 0.074 |
+| Tempo da matriz de distâncias | 249.3 ± 52.0 ms | 40.0 ± 5.2 ms |
 
-Na última verificação de tempo:
+Razão entre as médias de tempo (original/reduzido): **6.23×**.
 
-- matriz original: aproximadamente **139 ms**;
-- matriz reduzida: aproximadamente **93 ± 9 ms**;
-- aceleração aproximada: **1,5×**.
+## Interpretação
 
-Os tempos podem variar entre execuções e máquinas.
+As métricas respondem a perguntas diferentes. A correlação de Pearson mede associação global entre as distâncias das duas representações; a acurácia por fácies mede se o conjunto de vizinhos empatados na menor distância pertence à mesma classe; e o acordo de primeiro vizinho mede a concordância com o baseline. Em empates, o crédito é fracionado uniformemente entre os candidatos mínimos, sem usar nomes ou rótulos para desempatar.
 
-## Leitura do resultado
+Nenhuma dessas medidas, isoladamente, demonstra preservação completa da similaridade. Este resultado é uma **prova de conceito descritiva em um conjunto fixo**, não uma estimativa de generalização para poços novos nem uma validação geológica ampla.
 
-O experimento não sustenta a afirmação de que a redução por SOM melhora consistentemente a identificação do vizinho mais próximo. A acurácia média no espaço reduzido foi inferior à do baseline e apresentou variabilidade entre inicializações.
+## Observação sobre agregação
 
-Por outro lado, a representação reduzida preservou parcialmente a estrutura global de distâncias, com correlação média de 0,758, e apresentou maior razão de separação entre fácies. A etapa de comparação também foi mais rápida nesta implementação.
-
-Assim, a conclusão mais segura é:
-
-> Neste recorte pequeno, a redução baseada em SOM preservou parte da estrutura de similaridade e reduziu o custo da comparação, mas introduziu variabilidade e perda de desempenho na métrica de vizinho mais próximo.
-
-O resultado deve ser interpretado como **prova de conceito**. O conjunto é deliberadamente pequeno e não permite concluir que a mesma relação ocorrerá em qualquer bacia, poço ou conjunto de curvas.
-
-## O que isso permite dizer na apresentação
-
-> Em uma prova de conceito com 12 segmentos reais de poços e três curvas de perfilagem, uma codificação 1D baseada em SOM foi avaliada em 30 inicializações diferentes. A representação reduzida manteve correlação média de 0,758 com as distâncias originais e reduziu o custo computacional da comparação. Entretanto, a acurácia do vizinho mais próximo caiu em média, mostrando que a redução preserva apenas parcialmente a estrutura de similaridade e que seus resultados dependem da inicialização.
+Os resultados principais acima são a **média das métricas calculadas separadamente em cada uma das 30 sementes**. O arquivo distance_matrix_reduced_mean.csv contém, separadamente, a média elemento a elemento das 30 matrizes reduzidas e serve apenas como visualização agregada; ele não representa uma execução individual do SOM.

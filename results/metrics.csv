@@ -1,9 +1,8 @@
 metric,original_value,reduced_mean,reduced_std
-nn_accuracy_original,0.583333,,
-nn_accuracy_reduced,,0.486111,0.082127
-separation_ratio_original,1.366614,,
-separation_ratio_reduced,,2.543007,0.359917
-distance_correlation_reduced,,0.758011,0.062262
-runtime_original_ms,139.453620,,
-runtime_reduced_ms,,92.788167,9.358138
-speedup,1.502925,,
+nn_accuracy,0.500000,0.495833,0.056169
+first_neighbor_agreement_tie_aware,,0.606944,0.062556
+separation_ratio,1.301147,1.954326,0.176804
+pearson_distance_correlation,1.000000,0.753919,0.073850
+runtime_ms,249.342866,40.033976,5.221911
+runtime_original_std_ms,51.967604,,
+speedup_ratio_of_means,6.228281,,

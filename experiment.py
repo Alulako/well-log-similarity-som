@@ -11,6 +11,7 @@ import numpy as np
 
 
 FEATURES = ("GR", "PHIND", "PE")
+EXPECTED_SEGMENT_LENGTH = 16
 N_NEURONS = 8
 SOM_ITERATIONS = 2500
 N_RUNS = 30
@@ -25,40 +26,72 @@ def load_segments(csv_path: Path):
         reader = csv.DictReader(f)
         for row in reader:
             sid = row["segment_id"]
+            current_metadata = {
+                "facies": int(row["facies"]),
+                "well_name": row["well_name"],
+                "formation": row["formation"],
+            }
+
             if sid not in segments:
                 segments[sid] = []
-                metadata[sid] = {
-                    "facies": int(row["facies"]),
-                    "well_name": row["well_name"],
-                    "formation": row["formation"],
-                }
-            segments[sid].append([float(row[name]) for name in FEATURES])
+                metadata[sid] = current_metadata
+            elif metadata[sid] != current_metadata:
+                raise ValueError(f"Metadados inconsistentes no segmento {sid}.")
 
-    segments = {sid: np.asarray(values, dtype=float) for sid, values in segments.items()}
-    return segments, metadata
+            values = [float(row[name]) for name in FEATURES]
+            if not np.all(np.isfinite(values)):
+                raise ValueError(f"Valor não finito encontrado no segmento {sid}.")
+            segments[sid].append(values)
+
+    arrays = {
+        sid: np.asarray(values, dtype=float)
+        for sid, values in segments.items()
+    }
+
+    if not arrays:
+        raise ValueError("Nenhum segmento foi carregado.")
+
+    lengths = {sid: len(values) for sid, values in arrays.items()}
+    if set(lengths.values()) != {EXPECTED_SEGMENT_LENGTH}:
+        raise ValueError(
+            f"Todos os segmentos devem ter {EXPECTED_SEGMENT_LENGTH} amostras: {lengths}"
+        )
+
+    return arrays, metadata
 
 
 def standardize_segments(segments):
     all_values = np.vstack(list(segments.values()))
     mean = all_values.mean(axis=0)
-    std = all_values.std(axis=0)
+    std = all_values.std(axis=0, ddof=0)
     std[std == 0] = 1.0
-    standardized = {sid: (values - mean) / std for sid, values in segments.items()}
+
+    standardized = {
+        sid: (values - mean) / std
+        for sid, values in segments.items()
+    }
     return standardized, mean, std
 
 
 class OneDimensionalSOM:
-    """SOM 1D pequeno, implementado apenas com NumPy para manter o experimento simples."""
+    """SOM 1D compacto, implementado com NumPy para manter o experimento simples."""
 
-    def __init__(self, n_neurons: int, input_dim: int, seed: int = 42):
+    def __init__(self, n_neurons: int, input_dim: int, seed: int):
         self.n_neurons = n_neurons
         self.input_dim = input_dim
         self.rng = np.random.default_rng(seed)
         self.weights = None
         self.positions = np.arange(n_neurons, dtype=float)
 
-    def fit(self, data: np.ndarray, iterations: int = 2500):
-        init_idx = self.rng.choice(len(data), size=self.n_neurons, replace=False)
+    def fit(self, data: np.ndarray, iterations: int):
+        if len(data) < self.n_neurons:
+            raise ValueError("O número de amostras deve ser >= ao número de neurônios.")
+
+        init_idx = self.rng.choice(
+            len(data),
+            size=self.n_neurons,
+            replace=False,
+        )
         self.weights = data[init_idx].copy()
 
         initial_lr = 0.45
@@ -82,17 +115,24 @@ class OneDimensionalSOM:
         return self
 
     def transform(self, sequence: np.ndarray) -> np.ndarray:
+        if self.weights is None:
+            raise RuntimeError("O SOM precisa ser treinado antes da transformação.")
+
         distances = np.linalg.norm(
-            sequence[:, None, :] - self.weights[None, :, :], axis=2
+            sequence[:, None, :] - self.weights[None, :, :],
+            axis=2,
         )
         bmu = np.argmin(distances, axis=1).astype(float)
-        # Como o SOM é 1D, a posição do neurônio preserva uma ordenação topológica.
+
+        # A saída é uma codificação escalar pela posição do BMU na cadeia 1D.
+        # O treinamento incentiva organização topológica, mas não a garante.
         return bmu / max(1, self.n_neurons - 1)
 
 
 def dtw_distance(a: np.ndarray, b: np.ndarray) -> float:
-    """DTW normalizado. Usa custo absoluto em 1D e Euclidiano no caso multivariado."""
+    """Custo acumulado de DTW, sem normalização posterior pelo caminho."""
     scalar_mode = a.ndim == 1 and b.ndim == 1
+
     if not scalar_mode:
         if a.ndim == 1:
             a = a[:, None]
@@ -101,7 +141,6 @@ def dtw_distance(a: np.ndarray, b: np.ndarray) -> float:
 
     n, m = len(a), len(b)
     costs = np.full((n + 1, m + 1), np.inf, dtype=float)
-    steps = np.zeros((n + 1, m + 1), dtype=int)
     costs[0, 0] = 0.0
 
     for i in range(1, n + 1):
@@ -110,50 +149,99 @@ def dtw_distance(a: np.ndarray, b: np.ndarray) -> float:
                 local = abs(float(a[i - 1]) - float(b[j - 1]))
             else:
                 local = float(np.linalg.norm(a[i - 1] - b[j - 1]))
-            candidates = (
-                (costs[i - 1, j], steps[i - 1, j]),
-                (costs[i, j - 1], steps[i, j - 1]),
-                (costs[i - 1, j - 1], steps[i - 1, j - 1]),
-            )
-            prev_cost, prev_steps = min(candidates, key=lambda item: item[0])
-            costs[i, j] = local + prev_cost
-            steps[i, j] = prev_steps + 1
 
-    return costs[n, m] / max(1, steps[n, m])
+            costs[i, j] = local + min(
+                costs[i - 1, j],
+                costs[i, j - 1],
+                costs[i - 1, j - 1],
+            )
+
+    return float(costs[n, m])
 
 
 def distance_matrix(sequences, ids):
     n = len(ids)
     matrix = np.zeros((n, n), dtype=float)
+
     for i in range(n):
         for j in range(i + 1, n):
             d = dtw_distance(sequences[ids[i]], sequences[ids[j]])
             matrix[i, j] = d
             matrix[j, i] = d
+
     return matrix
 
 
-def nearest_neighbor_accuracy(matrix, ids, metadata):
-    hits = 0
+def nearest_neighbor_summary(matrix, ids, metadata):
+    total_facies_credit = 0.0
     rows = []
 
     for i, sid in enumerate(ids):
-        candidates = [(matrix[i, j], ids[j]) for j in range(len(ids)) if j != i]
-        distance, neighbor = min(candidates)
-        same = metadata[sid]["facies"] == metadata[neighbor]["facies"]
-        hits += int(same)
+        distances = matrix[i].copy()
+        distances[i] = np.inf
+        min_distance = float(np.min(distances))
+
+        tied = np.flatnonzero(
+            np.isclose(
+                distances,
+                min_distance,
+                rtol=1e-12,
+                atol=1e-12,
+            )
+        )
+        neighbor_ids = tuple(ids[int(j)] for j in tied)
+        neighbor_facies = tuple(
+            metadata[neighbor]["facies"]
+            for neighbor in neighbor_ids
+        )
+
+        # Métrica tie-aware: em caso de empate, distribui crédito igualmente
+        # entre todos os candidatos mínimos, evitando qualquer viés de ordem/nome.
+        facies_credit = float(
+            np.mean(
+                [
+                    facies == metadata[sid]["facies"]
+                    for facies in neighbor_facies
+                ]
+            )
+        )
+        total_facies_credit += facies_credit
+
         rows.append(
             {
                 "segment_id": sid,
                 "facies": metadata[sid]["facies"],
-                "nearest_neighbor": neighbor,
-                "neighbor_facies": metadata[neighbor]["facies"],
-                "distance": distance,
-                "same_facies": same,
+                "neighbor_ids": neighbor_ids,
+                "neighbor_facies": neighbor_facies,
+                "distance": min_distance,
+                "facies_credit": facies_credit,
+                "tie_count": int(len(tied)),
             }
         )
 
-    return hits / len(ids), rows
+    return total_facies_credit / len(ids), rows
+
+
+def preserved_neighbor_fraction(original_rows, reduced_rows):
+    """Acordo esperado sob desempate uniforme entre vizinhos empatados."""
+    original = {
+        row["segment_id"]: set(row["neighbor_ids"])
+        for row in original_rows
+    }
+
+    scores = []
+    for row in reduced_rows:
+        original_set = original[row["segment_id"]]
+        reduced_set = set(row["neighbor_ids"])
+        intersection = len(original_set & reduced_set)
+
+        # Probabilidade de duas escolhas uniformes (uma de cada conjunto
+        # empatado) selecionarem o mesmo vizinho.
+        scores.append(
+            intersection / (len(original_set) * len(reduced_set))
+        )
+
+    return float(np.mean(scores))
 
 
 def separation_ratio(matrix, ids, metadata):
@@ -174,58 +262,44 @@ def separation_ratio(matrix, ids, metadata):
 
 
 def upper_triangle(matrix):
-    values = []
-    for i in range(len(matrix)):
-        for j in range(i + 1, len(matrix)):
-            values.append(matrix[i, j])
-    return np.asarray(values, dtype=float)
+    return np.asarray(
+        [
+            matrix[i, j]
+            for i in range(len(matrix))
+            for j in range(i + 1, len(matrix))
+        ],
+        dtype=float,
+    )
 
 
-def correlation(a, b):
+def pearson_distance_correlation(a, b):
     if np.std(a) == 0 or np.std(b) == 0:
         return float("nan")
     return float(np.corrcoef(a, b)[0, 1])
 
 
-def benchmark(sequences, ids, repetitions=40):
+def _timed_matrix(sequences, ids):
     start = time.perf_counter()
-    for _ in range(repetitions):
-        distance_matrix(sequences, ids)
-    elapsed = time.perf_counter() - start
-    return (elapsed / repetitions) * 1000.0
+    distance_matrix(sequences, ids)
+    return (time.perf_counter() - start) * 1000.0
 
 
-def matrix_to_csv(matrix, ids):
-    lines = ["," + ",".join(ids)]
-    for sid, row in zip(ids, matrix):
-        lines.append(sid + "," + ",".join(f"{value:.6f}" for value in row))
-    return "\n".join(lines) + "\n"
+def benchmark_pair(original, reduced, ids, seed):
+    """Cronometra apenas a etapa de comparação, com representações já disponíveis."""
+    original_times = []
+    reduced_times = []
 
+    for repetition in range(BENCHMARK_REPETITIONS):
+        original_first = (seed + repetition) % 2 == 0
 
-def rows_to_csv(rows):
-    fieldnames = [
-        "segment_id",
-        "facies",
-        "nearest_neighbor",
-        "neighbor_facies",
-        "distance",
-        "same_facies",
-    ]
-    out = [",".join(fieldnames)]
-    for row in rows:
-        out.append(
-            ",".join(
-                [
-                    str(row["segment_id"]),
-                    str(row["facies"]),
-                    str(row["nearest_neighbor"]),
-                    str(row["neighbor_facies"]),
-                    f'{row["distance"]:.6f}',
-                    str(row["same_facies"]),
-                ]
-            )
-        )
-    return "\n".join(out) + "\n"
+        if original_first:
+            original_times.append(_timed_matrix(original, ids))
+            reduced_times.append(_timed_matrix(reduced, ids))
+        else:
+            reduced_times.append(_timed_matrix(reduced, ids))
+            original_times.append(_timed_matrix(original, ids))
+
+    return float(np.mean(original_times)), float(np.mean(reduced_times))
 
 
 def stats(values):
@@ -235,6 +309,244 @@ def stats(values):
     return mean, std
 
 
+def matrix_to_csv(matrix, ids):
+    lines = ["," + ",".join(ids)]
+    for sid, row in zip(ids, matrix):
+        lines.append(
+            sid + "," + ",".join(f"{value:.6f}" for value in row)
+        )
+    return "\n".join(lines) + "\n"
+
+
+def rows_to_csv(rows):
+    fieldnames = [
+        "segment_id",
+        "facies",
+        "nearest_neighbors",
+        "neighbor_facies",
+        "distance",
+        "facies_credit",
+        "tie_count",
+    ]
+    out = [",".join(fieldnames)]
+
+    for row in rows:
+        out.append(
+            ",".join(
+                [
+                    str(row["segment_id"]),
+                    str(row["facies"]),
+                    "|".join(row["neighbor_ids"]),
+                    "|".join(str(v) for v in row["neighbor_facies"]),
+                    f'{row["distance"]:.6f}',
+                    f'{row["facies_credit"]:.6f}',
+                    str(row["tie_count"]),
+                ]
+            )
+        )
+
+    return "\n".join(out) + "\n"
+
+
+def run(data_path: Path):
+    segments, metadata = load_segments(data_path)
+    ids = list(segments.keys())
+
+    standardized, mean, std = standardize_segments(segments)
+    all_data = np.vstack([standardized[sid] for sid in ids])
+
+    original_matrix = distance_matrix(standardized, ids)
+    original_acc, original_nn = nearest_neighbor_summary(
+        original_matrix,
+        ids,
+        metadata,
+    )
+    original_within, original_between, original_ratio = separation_ratio(
+        original_matrix,
+        ids,
+        metadata,
+    )
+
+    per_run = []
+    reduced_matrix_sum = np.zeros_like(original_matrix)
+
+    for seed in range(N_RUNS):
+        som = OneDimensionalSOM(
+            N_NEURONS,
+            len(FEATURES),
+            seed=seed,
+        )
+        som.fit(all_data, iterations=SOM_ITERATIONS)
+
+        reduced = {
+            sid: som.transform(standardized[sid])
+            for sid in ids
+        }
+
+        reduced_matrix = distance_matrix(reduced, ids)
+        reduced_matrix_sum += reduced_matrix
+
+        reduced_acc, reduced_nn = nearest_neighbor_summary(
+            reduced_matrix,
+            ids,
+            metadata,
+        )
+        preserved_nn = preserved_neighbor_fraction(
+            original_nn,
+            reduced_nn,
+        )
+        reduced_within, reduced_between, reduced_ratio = separation_ratio(
+            reduced_matrix,
+            ids,
+            metadata,
+        )
+        pearson_r = pearson_distance_correlation(
+            upper_triangle(original_matrix),
+            upper_triangle(reduced_matrix),
+        )
+
+        original_ms, reduced_ms = benchmark_pair(
+            standardized,
+            reduced,
+            ids,
+            seed=seed,
+        )
+
+        per_run.append(
+            {
+                "seed": seed,
+                "nn_accuracy": reduced_acc,
+                "preserved_nearest_neighbor": preserved_nn,
+                "within_distance": reduced_within,
+                "between_distance": reduced_between,
+                "separation_ratio": reduced_ratio,
+                "pearson_distance_correlation": pearson_r,
+                "original_runtime_ms": original_ms,
+                "reduced_runtime_ms": reduced_ms,
+            }
+        )
+
+    reduced_matrix_mean = reduced_matrix_sum / N_RUNS
+    _, reduced_nn_from_mean_matrix = nearest_neighbor_summary(
+        reduced_matrix_mean,
+        ids,
+        metadata,
+    )
+
+    reduced_acc_mean, reduced_acc_std = stats(
+        [row["nn_accuracy"] for row in per_run]
+    )
+    preserved_mean, preserved_std = stats(
+        [row["preserved_nearest_neighbor"] for row in per_run]
+    )
+    within_mean, within_std = stats(
+        [row["within_distance"] for row in per_run]
+    )
+    between_mean, between_std = stats(
+        [row["between_distance"] for row in per_run]
+    )
+    ratio_mean, ratio_std = stats(
+        [row["separation_ratio"] for row in per_run]
+    )
+    pearson_mean, pearson_std = stats(
+        [row["pearson_distance_correlation"] for row in per_run]
+    )
+    original_runtime_mean, original_runtime_std = stats(
+        [row["original_runtime_ms"] for row in per_run]
+    )
+    reduced_runtime_mean, reduced_runtime_std = stats(
+        [row["reduced_runtime_ms"] for row in per_run]
+    )
+
+    speedup = (
+        original_runtime_mean / reduced_runtime_mean
+        if reduced_runtime_mean
+        else math.inf
+    )
+
+    return {
+        "ids": ids,
+        "metadata": metadata,
+        "mean": mean,
+        "std": std,
+        "original_matrix": original_matrix,
+        "original_nn": original_nn,
+        "reduced_matrix_mean": reduced_matrix_mean,
+        "reduced_nn_from_mean_matrix": reduced_nn_from_mean_matrix,
+        "per_run": per_run,
+        "metrics": {
+            "original_nn_accuracy": original_acc,
+            "original_within_distance": original_within,
+            "original_between_distance": original_between,
+            "original_separation_ratio": original_ratio,
+            "reduced_nn_accuracy_mean": reduced_acc_mean,
+            "reduced_nn_accuracy_std": reduced_acc_std,
+            "preserved_nearest_neighbor_mean": preserved_mean,
+            "preserved_nearest_neighbor_std": preserved_std,
+            "reduced_within_distance_mean": within_mean,
+            "reduced_within_distance_std": within_std,
+            "reduced_between_distance_mean": between_mean,
+            "reduced_between_distance_std": between_std,
+            "reduced_separation_ratio_mean": ratio_mean,
+            "reduced_separation_ratio_std": ratio_std,
+            "pearson_distance_correlation_mean": pearson_mean,
+            "pearson_distance_correlation_std": pearson_std,
+            "original_runtime_ms_mean": original_runtime_mean,
+            "original_runtime_ms_std": original_runtime_std,
+            "reduced_runtime_ms_mean": reduced_runtime_mean,
+            "reduced_runtime_ms_std": reduced_runtime_std,
+            "speedup_ratio_of_means": speedup,
+        },
+    }
+
+
+def summary_markdown(result):
+    m = result["metrics"]
+
+    return f"""# Resultado do experimento
+
+## Pergunta testada
+
+Uma representação reduzida baseada em SOM consegue preservar relações úteis de similaridade entre segmentos de perfis de poços e reduzir o custo da etapa de comparação?
+
+## Dados e recorte
+
+Foram usados 12 segmentos reais do conjunto público da SEG: 3 fácies, 4 segmentos por fácies, 16 amostras por segmento e 3 curvas (GR, PHIND e PE).
+
+Os rótulos de fácies foram usados **na seleção do recorte e na avaliação**, mas não entram como atributos nem como alvos do treinamento do SOM. O recorte é estratificado e deliberadamente pequeno. Vizinhos do mesmo poço são permitidos porque o objetivo é estudar a geometria deste conjunto fixo, não estimar desempenho em poços novos.
+
+## Comparações
+
+- Baseline: três curvas padronizadas + DTW multivariado dependente.
+- Redução: SOM 1D com {N_NEURONS} neurônios + DTW 1D.
+- O SOM é repetido {N_RUNS} vezes, com sementes de 0 a {N_RUNS - 1}.
+- O DTW usa **custo acumulado**, sem normalização pelo comprimento do caminho.
+- O tempo reportado mede **somente a construção da matriz de distâncias com as representações já disponíveis**; treinamento e transformação do SOM ficam fora do cronômetro.
+
+## Resultados
+
+| Métrica | Original | SOM reduzido — média ± DP |
+|---|---:|---:|
+| Acurácia do vizinho mais próximo por fácies (empates fracionados) | {m['original_nn_accuracy']:.1%} | {m['reduced_nn_accuracy_mean']:.1%} ± {m['reduced_nn_accuracy_std']:.1%} |
+| Acordo com o primeiro vizinho do baseline (empates fracionados) | — | {m['preserved_nearest_neighbor_mean']:.1%} ± {m['preserved_nearest_neighbor_std']:.1%} |
+| Razão de separação inter/intrafácies | {m['original_separation_ratio']:.3f} | {m['reduced_separation_ratio_mean']:.3f} ± {m['reduced_separation_ratio_std']:.3f} |
+| Correlação de Pearson entre distâncias e baseline | 1,000 | {m['pearson_distance_correlation_mean']:.3f} ± {m['pearson_distance_correlation_std']:.3f} |
+| Tempo da matriz de distâncias | {m['original_runtime_ms_mean']:.1f} ± {m['original_runtime_ms_std']:.1f} ms | {m['reduced_runtime_ms_mean']:.1f} ± {m['reduced_runtime_ms_std']:.1f} ms |
+
+Razão entre as médias de tempo (original/reduzido): **{m['speedup_ratio_of_means']:.2f}×**.
+
+## Interpretação
+
+As métricas respondem a perguntas diferentes. A correlação de Pearson mede associação global entre as distâncias das duas representações; a acurácia por fácies mede se o conjunto de vizinhos empatados na menor distância pertence à mesma classe; e o acordo de primeiro vizinho mede a concordância com o baseline. Em empates, o crédito é fracionado uniformemente entre os candidatos mínimos, sem usar nomes ou rótulos para desempatar.
+
+Nenhuma dessas medidas, isoladamente, demonstra preservação completa da similaridade. Este resultado é uma **prova de conceito descritiva em um conjunto fixo**, não uma estimativa de generalização para poços novos nem uma validação geológica ampla.
+
+## Observação sobre agregação
+
+Os resultados principais acima são a **média das métricas calculadas separadamente em cada uma das {N_RUNS} sementes**. O arquivo distance_matrix_reduced_mean.csv contém, separadamente, a média elemento a elemento das {N_RUNS} matrizes reduzidas e serve apenas como visualização agregada; ele não representa uma execução individual do SOM.
+"""
+
+
 def html_report(result):
     m = result["metrics"]
     ids = result["ids"]
@@ -242,8 +554,10 @@ def html_report(result):
 
     segments = "".join(
         "<tr>"
-        f"<td>{sid}</td><td>{metadata[sid]['well_name']}</td>"
-        f"<td>{metadata[sid]['formation']}</td><td>{metadata[sid]['facies']}</td>"
+        f"<td>{sid}</td>"
+        f"<td>{metadata[sid]['well_name']}</td>"
+        f"<td>{metadata[sid]['formation']}</td>"
+        f"<td>{metadata[sid]['facies']}</td>"
         "</tr>"
         for sid in ids
     )
@@ -266,131 +580,37 @@ th, td {{ border-bottom: 1px solid #ddd; padding: 8px; text-align: left; }}
 </style>
 </head>
 <body>
-<h1>Experimento pequeno: preservação de similaridade após redução por SOM</h1>
-<p>Dados reais de perfilagem do conjunto público de fácies da SEG (2016). Foram usados 12 segmentos, 16 amostras por segmento, três fácies e três curvas: GR, PHIND e PE.</p>
+<h1>Preservação de similaridade após redução por SOM</h1>
+<p>Prova de conceito com 12 segmentos reais, 16 amostras por segmento, três fácies e três curvas: GR, PHIND e PE.</p>
 
 <div class="grid">
 <div class="card"><strong>Acurácia NN — original</strong><span>{m['original_nn_accuracy']:.1%}</span></div>
-<div class="card"><strong>Acurácia NN — SOM (30 execuções)</strong><span>{m['reduced_nn_accuracy_mean']:.1%} ± {m['reduced_nn_accuracy_std']:.1%}</span></div>
-<div class="card"><strong>Correlação das distâncias</strong><span>{m['distance_correlation_mean']:.3f} ± {m['distance_correlation_std']:.3f}</span></div>
-<div class="card"><strong>Speedup aproximado</strong><span>{m['speedup']:.2f}×</span></div>
+<div class="card"><strong>Acurácia NN — SOM</strong><span>{m['reduced_nn_accuracy_mean']:.1%} ± {m['reduced_nn_accuracy_std']:.1%}</span></div>
+<div class="card"><strong>Mesmo NN preservado</strong><span>{m['preserved_nearest_neighbor_mean']:.1%} ± {m['preserved_nearest_neighbor_std']:.1%}</span></div>
+<div class="card"><strong>Pearson das distâncias</strong><span>{m['pearson_distance_correlation_mean']:.3f} ± {m['pearson_distance_correlation_std']:.3f}</span></div>
 </div>
-
-<h2>Por que 30 execuções?</h2>
-<p>O treinamento do SOM envolve inicialização e amostragem aleatórias. Por isso, o experimento é repetido com 30 sementes diferentes e os resultados do espaço reduzido são apresentados como média ± desvio-padrão. Isso evita escolher uma execução excepcionalmente favorável.</p>
 
 <h2>Resultados principais</h2>
 <table>
 <thead><tr><th>Métrica</th><th>Original</th><th>SOM reduzido</th></tr></thead>
 <tbody>
-<tr><td>Acurácia do vizinho mais próximo por fácies</td><td>{m['original_nn_accuracy']:.3f}</td><td>{m['reduced_nn_accuracy_mean']:.3f} ± {m['reduced_nn_accuracy_std']:.3f}</td></tr>
+<tr><td>Acurácia do vizinho mais próximo por fácies (empates fracionados)</td><td>{m['original_nn_accuracy']:.3f}</td><td>{m['reduced_nn_accuracy_mean']:.3f} ± {m['reduced_nn_accuracy_std']:.3f}</td></tr>
+<tr><td>Acordo com o primeiro vizinho do baseline (empates fracionados)</td><td>—</td><td>{m['preserved_nearest_neighbor_mean']:.3f} ± {m['preserved_nearest_neighbor_std']:.3f}</td></tr>
 <tr><td>Razão de separação</td><td>{m['original_separation_ratio']:.3f}</td><td>{m['reduced_separation_ratio_mean']:.3f} ± {m['reduced_separation_ratio_std']:.3f}</td></tr>
-<tr><td>Correlação com a matriz original</td><td>1,000</td><td>{m['distance_correlation_mean']:.3f} ± {m['distance_correlation_std']:.3f}</td></tr>
-<tr><td>Tempo da matriz de distâncias</td><td>{m['original_runtime_ms']:.1f} ms</td><td>{m['reduced_runtime_ms_mean']:.1f} ± {m['reduced_runtime_ms_std']:.1f} ms</td></tr>
+<tr><td>Correlação de Pearson com as distâncias originais</td><td>1,000</td><td>{m['pearson_distance_correlation_mean']:.3f} ± {m['pearson_distance_correlation_std']:.3f}</td></tr>
+<tr><td>Tempo da matriz de distâncias</td><td>{m['original_runtime_ms_mean']:.1f} ± {m['original_runtime_ms_std']:.1f} ms</td><td>{m['reduced_runtime_ms_mean']:.1f} ± {m['reduced_runtime_ms_std']:.1f} ms</td></tr>
 </tbody>
 </table>
 
-<h2>Interpretação</h2>
-<p>A redução por SOM preservou parcialmente a estrutura global de distâncias: a correlação média com a matriz original foi positiva e relativamente alta. A razão de separação entre fácies aumentou no espaço reduzido, mas a acurácia do vizinho mais próximo apresentou variabilidade entre execuções e, em média, não superou o baseline original. Portanto, o resultado não sustenta a afirmação de que o SOM melhora consistentemente a identificação do vizinho mais próximo neste recorte.</p>
-
-<div class="note">Conclusão segura: o experimento oferece evidência de que a representação reduzida pode preservar parte da estrutura de similaridade e diminuir o custo da comparação, mas a qualidade de vizinhança depende da inicialização do SOM. É uma prova de conceito, não uma validação geológica geral.</div>
+<div class="note">
+O benchmark mede apenas a construção da matriz de distâncias com as representações já disponíveis. O treinamento/transformação pelo SOM não está incluído. Os rótulos de fácies são usados na seleção do recorte e na avaliação, não no treinamento.
+</div>
 
 <h2>Segmentos usados</h2>
 <table><thead><tr><th>Segmento</th><th>Poço</th><th>Formação</th><th>Fácies</th></tr></thead><tbody>{segments}</tbody></table>
 </body>
 </html>
 """
-
-
-def run(data_path: Path):
-    segments, metadata = load_segments(data_path)
-    ids = list(segments.keys())
-
-    standardized, mean, std = standardize_segments(segments)
-    all_data = np.vstack([standardized[sid] for sid in ids])
-
-    original_matrix = distance_matrix(standardized, ids)
-    original_acc, original_nn = nearest_neighbor_accuracy(original_matrix, ids, metadata)
-    ow, ob, oratio = separation_ratio(original_matrix, ids, metadata)
-    original_ms = benchmark(
-        standardized, ids, repetitions=BENCHMARK_REPETITIONS * 2
-    )
-
-    per_run = []
-    reduced_matrix_sum = np.zeros_like(original_matrix)
-
-    for seed in range(N_RUNS):
-        som = OneDimensionalSOM(N_NEURONS, len(FEATURES), seed=seed)
-        som.fit(all_data, iterations=SOM_ITERATIONS)
-        reduced = {sid: som.transform(standardized[sid]) for sid in ids}
-
-        reduced_matrix = distance_matrix(reduced, ids)
-        reduced_matrix_sum += reduced_matrix
-        reduced_acc, _ = nearest_neighbor_accuracy(reduced_matrix, ids, metadata)
-        rw, rb, rratio = separation_ratio(reduced_matrix, ids, metadata)
-        corr = correlation(
-            upper_triangle(original_matrix), upper_triangle(reduced_matrix)
-        )
-        reduced_ms = benchmark(
-            reduced, ids, repetitions=BENCHMARK_REPETITIONS
-        )
-
-        per_run.append(
-            {
-                "seed": seed,
-                "nn_accuracy": reduced_acc,
-                "within_distance": rw,
-                "between_distance": rb,
-                "separation_ratio": rratio,
-                "distance_correlation": corr,
-                "runtime_ms": reduced_ms,
-            }
-        )
-
-    acc_mean, acc_std = stats([r["nn_accuracy"] for r in per_run])
-    within_mean, within_std = stats([r["within_distance"] for r in per_run])
-    between_mean, between_std = stats([r["between_distance"] for r in per_run])
-    ratio_mean, ratio_std = stats([r["separation_ratio"] for r in per_run])
-    corr_mean, corr_std = stats([r["distance_correlation"] for r in per_run])
-    runtime_mean, runtime_std = stats([r["runtime_ms"] for r in per_run])
-
-    speedup = original_ms / runtime_mean if runtime_mean else math.inf
-    reduced_matrix_mean = reduced_matrix_sum / N_RUNS
-    _, reduced_nn_mean = nearest_neighbor_accuracy(
-        reduced_matrix_mean, ids, metadata
-    )
-
-    return {
-        "ids": ids,
-        "metadata": metadata,
-        "mean": mean,
-        "std": std,
-        "original_matrix": original_matrix,
-        "original_nn": original_nn,
-        "reduced_matrix_mean": reduced_matrix_mean,
-        "reduced_nn_mean": reduced_nn_mean,
-        "per_run": per_run,
-        "metrics": {
-            "original_nn_accuracy": original_acc,
-            "original_within_distance": ow,
-            "original_between_distance": ob,
-            "original_separation_ratio": oratio,
-            "original_runtime_ms": original_ms,
-            "reduced_nn_accuracy_mean": acc_mean,
-            "reduced_nn_accuracy_std": acc_std,
-            "reduced_within_distance_mean": within_mean,
-            "reduced_within_distance_std": within_std,
-            "reduced_between_distance_mean": between_mean,
-            "reduced_between_distance_std": between_std,
-            "reduced_separation_ratio_mean": ratio_mean,
-            "reduced_separation_ratio_std": ratio_std,
-            "distance_correlation_mean": corr_mean,
-            "distance_correlation_std": corr_std,
-            "reduced_runtime_ms_mean": runtime_mean,
-            "reduced_runtime_ms_std": runtime_std,
-            "speedup": speedup,
-        },
-    }
 
 
 def print_summary(result):
@@ -400,131 +620,119 @@ def print_summary(result):
     print("12 segmentos reais | 3 facies | 16 amostras/segmento | GR, PHIND, PE")
     print(f"SOM repetido em {N_RUNS} sementes diferentes")
     print()
-    print(f"Acuracia NN - original (mDTW):       {m['original_nn_accuracy']:.3f}")
+    print(f"Acuracia NN - original:              {m['original_nn_accuracy']:.3f}")
     print(
-        "Acuracia NN - SOM 1D + DTW:        "
+        "Acuracia NN - SOM:                   "
         f"{m['reduced_nn_accuracy_mean']:.3f} +/- {m['reduced_nn_accuracy_std']:.3f}"
+    )
+    print(
+        "Mesmo primeiro vizinho preservado:   "
+        f"{m['preserved_nearest_neighbor_mean']:.3f} +/- "
+        f"{m['preserved_nearest_neighbor_std']:.3f}"
     )
     print(f"Razao separacao - original:          {m['original_separation_ratio']:.3f}")
     print(
-        "Razao separacao - SOM:             "
+        "Razao separacao - SOM:               "
         f"{m['reduced_separation_ratio_mean']:.3f} +/- "
         f"{m['reduced_separation_ratio_std']:.3f}"
     )
     print(
-        "Correlacao distancias orig/reduz:  "
-        f"{m['distance_correlation_mean']:.3f} +/- "
-        f"{m['distance_correlation_std']:.3f}"
+        "Pearson distancias original/reduzido:"
+        f" {m['pearson_distance_correlation_mean']:.3f} +/- "
+        f"{m['pearson_distance_correlation_std']:.3f}"
     )
-    print(f"Tempo matriz original:               {m['original_runtime_ms']:.3f} ms")
     print(
-        "Tempo matriz reduzida:             "
-        f"{m['reduced_runtime_ms_mean']:.3f} +/- "
-        f"{m['reduced_runtime_ms_std']:.3f} ms"
+        "Tempo matriz original:               "
+        f"{m['original_runtime_ms_mean']:.1f} +/- "
+        f"{m['original_runtime_ms_std']:.1f} ms"
     )
-    print(f"Speedup aproximado:                  {m['speedup']:.2f}x")
+    print(
+        "Tempo matriz reduzida:                "
+        f"{m['reduced_runtime_ms_mean']:.1f} +/- "
+        f"{m['reduced_runtime_ms_std']:.1f} ms"
+    )
+    print(
+        "Razao das medias de tempo:            "
+        f"{m['speedup_ratio_of_means']:.2f}x"
+    )
     print()
-    print(
-        "Conclusao: o SOM preserva parcialmente a estrutura de similaridade e "
-        "reduz o custo da comparacao, mas o resultado de vizinho mais proximo "
-        "varia entre inicializacoes."
-    )
+    print("Interprete as métricas em conjunto; nenhum valor isolado confirma a hipótese.")
 
 
-def save_outputs(result, output_dir: Path):
-    output_dir.mkdir(parents=True, exist_ok=True)
+def build_output_files(result):
     ids = result["ids"]
     m = result["metrics"]
 
     summary_rows = [
-        ("nn_accuracy_original", m["original_nn_accuracy"], "", ""),
-        (
-            "nn_accuracy_reduced",
-            "",
-            m["reduced_nn_accuracy_mean"],
-            m["reduced_nn_accuracy_std"],
-        ),
-        ("separation_ratio_original", m["original_separation_ratio"], "", ""),
-        (
-            "separation_ratio_reduced",
-            "",
-            m["reduced_separation_ratio_mean"],
-            m["reduced_separation_ratio_std"],
-        ),
-        (
-            "distance_correlation_reduced",
-            "",
-            m["distance_correlation_mean"],
-            m["distance_correlation_std"],
-        ),
-        ("runtime_original_ms", m["original_runtime_ms"], "", ""),
-        (
-            "runtime_reduced_ms",
-            "",
-            m["reduced_runtime_ms_mean"],
-            m["reduced_runtime_ms_std"],
-        ),
-        ("speedup", m["speedup"], "", ""),
+        ("nn_accuracy", m["original_nn_accuracy"], m["reduced_nn_accuracy_mean"], m["reduced_nn_accuracy_std"]),
+        ("first_neighbor_agreement_tie_aware", "", m["preserved_nearest_neighbor_mean"], m["preserved_nearest_neighbor_std"]),
+        ("separation_ratio", m["original_separation_ratio"], m["reduced_separation_ratio_mean"], m["reduced_separation_ratio_std"]),
+        ("pearson_distance_correlation", 1.0, m["pearson_distance_correlation_mean"], m["pearson_distance_correlation_std"]),
+        ("runtime_ms", m["original_runtime_ms_mean"], m["reduced_runtime_ms_mean"], m["reduced_runtime_ms_std"]),
+        ("runtime_original_std_ms", m["original_runtime_ms_std"], "", ""),
+        ("speedup_ratio_of_means", m["speedup_ratio_of_means"], "", ""),
     ]
+
+    def fmt(value):
+        return f"{value:.6f}" if isinstance(value, (int, float)) else ""
 
     summary_lines = ["metric,original_value,reduced_mean,reduced_std"]
     for metric, original, reduced_mean, reduced_std in summary_rows:
-        original_text = f"{original:.6f}" if isinstance(original, (int, float)) else ""
-        mean_text = (
-            f"{reduced_mean:.6f}"
-            if isinstance(reduced_mean, (int, float))
-            else ""
-        )
-        std_text = (
-            f"{reduced_std:.6f}"
-            if isinstance(reduced_std, (int, float))
-            else ""
-        )
         summary_lines.append(
-            f"{metric},{original_text},{mean_text},{std_text}"
+            f"{metric},{fmt(original)},{fmt(reduced_mean)},{fmt(reduced_std)}"
         )
 
-    (output_dir / "metrics_summary.csv").write_text(
-        "\n".join(summary_lines) + "\n", encoding="utf-8"
-    )
+    summary_csv = "\n".join(summary_lines) + "\n"
 
     per_seed_lines = [
-        "seed,nn_accuracy,within_distance,between_distance,"
-        "separation_ratio,distance_correlation,runtime_ms"
+        "seed,nn_accuracy_tie_aware,first_neighbor_agreement_tie_aware,within_distance,"
+        "between_distance,separation_ratio,pearson_distance_correlation,"
+        "original_runtime_ms,reduced_runtime_ms"
     ]
     for row in result["per_run"]:
         per_seed_lines.append(
             f"{row['seed']},{row['nn_accuracy']:.6f},"
+            f"{row['preserved_nearest_neighbor']:.6f},"
             f"{row['within_distance']:.6f},{row['between_distance']:.6f},"
             f"{row['separation_ratio']:.6f},"
-            f"{row['distance_correlation']:.6f},{row['runtime_ms']:.6f}"
+            f"{row['pearson_distance_correlation']:.6f},"
+            f"{row['original_runtime_ms']:.6f},"
+            f"{row['reduced_runtime_ms']:.6f}"
         )
 
-    (output_dir / "per_seed_metrics.csv").write_text(
-        "\n".join(per_seed_lines) + "\n", encoding="utf-8"
+    reduced_matrix_mean_csv = matrix_to_csv(
+        result["reduced_matrix_mean"],
+        ids,
+    )
+    reduced_nn_mean_csv = rows_to_csv(
+        result["reduced_nn_from_mean_matrix"]
     )
 
-    (output_dir / "distance_matrix_original.csv").write_text(
-        matrix_to_csv(result["original_matrix"], ids), encoding="utf-8"
-    )
-    (output_dir / "distance_matrix_reduced.csv").write_text(
-        matrix_to_csv(result["reduced_matrix_mean"], ids), encoding="utf-8"
-    )
-    (output_dir / "nearest_neighbors_original.csv").write_text(
-        rows_to_csv(result["original_nn"]), encoding="utf-8"
-    )
-    (output_dir / "nearest_neighbors_reduced.csv").write_text(
-        rows_to_csv(result["reduced_nn_mean"]), encoding="utf-8"
-    )
+    return {
+        "metrics_summary.csv": summary_csv,
+        "metrics.csv": summary_csv,
+        "per_seed_metrics.csv": "\n".join(per_seed_lines) + "\n",
+        "distance_matrix_original.csv": matrix_to_csv(
+            result["original_matrix"],
+            ids,
+        ),
+        "distance_matrix_reduced_mean.csv": reduced_matrix_mean_csv,
+        "nearest_neighbors_original.csv": rows_to_csv(
+            result["original_nn"]
+        ),
+        "nearest_neighbors_reduced_from_mean_matrix.csv": reduced_nn_mean_csv,
+        # Aliases legados, explicitamente documentados no README.
+        "distance_matrix_reduced.csv": reduced_matrix_mean_csv,
+        "nearest_neighbors_reduced.csv": reduced_nn_mean_csv,
+        "summary.md": summary_markdown(result),
+        "report.html": html_report(result),
+    }
 
-    # Mantém metrics.csv como alias do resumo para evitar resultados antigos.
-    (output_dir / "metrics.csv").write_text(
-        "\n".join(summary_lines) + "\n", encoding="utf-8"
-    )
 
-    (output_dir / "report.html").write_text(
-        html_report(result), encoding="utf-8"
-    )
+def save_outputs(result, output_dir: Path):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for filename, content in build_output_files(result).items():
+        (output_dir / filename).write_text(content, encoding="utf-8")
 
 
 def main():
@@ -538,7 +746,7 @@ def main():
     parser.add_argument(
         "--save",
         action="store_true",
-        help="Salva tabelas e report.html em results/.",
+        help="Salva resultados consolidados em results/.",
     )
     args = parser.parse_args()
 
@@ -547,9 +755,8 @@ def main():
 
     if args.save:
         save_outputs(result, Path("results"))
-        print("\nArquivos salvos em results/.")
+        print("\nArquivos atualizados em results/.")
 
 
 if __name__ == "__main__":
     main()
-
