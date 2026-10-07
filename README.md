@@ -1,158 +1,158 @@
-# Well Log Similarity with SOM
+# Similaridade de Perfis de Poços com SOM
 
-Small, reproducible proof of concept for evaluating whether a SOM-based reduction preserves useful similarity relationships between short well-log segments.
+Prova de conceito pequena e reproduzível para avaliar se uma redução baseada em SOM preserva relações úteis de similaridade entre segmentos curtos de perfis de poços.
 
-## Research question
+## Pergunta de pesquisa
 
-Can a compact 1D representation obtained with a Self-Organizing Map preserve enough of the similarity structure of multivariate well-log segments to support simpler comparisons?
+Uma representação compacta 1D obtida com um Mapa Auto-Organizável (SOM) consegue preservar parte suficiente da estrutura de similaridade de segmentos multivariados de perfis de poços para permitir comparações mais simples?
 
-The experiment is intentionally small. It is not intended as a geological validation study or as a reproduction of the experiments from the research group.
+O experimento foi mantido propositalmente pequeno. Ele não pretende realizar uma validação geológica ampla nem reproduzir os experimentos do grupo de pesquisa.
 
-## Dataset
+## Conjunto de dados
 
-The data come from the public facies-classification dataset released by the Society of Exploration Geophysicists (SEG) and associated with:
+Os dados vêm de um conjunto público de classificação de fácies disponibilizado pela Society of Exploration Geophysicists (SEG) e associado ao trabalho:
 
 Hall, B. (2016). *Facies classification using machine learning*. The Leading Edge, 35(10), 906–909. DOI: 10.1190/tle35100906.1.
 
-The source file is pinned to commit:
+O arquivo-fonte foi fixado no commit:
 
 4885188ff29684ca2774662231f3adad6c3ec563
 
-Source file:
+Arquivo utilizado:
 
 https://raw.githubusercontent.com/seg/tutorials-2016/4885188ff29684ca2774662231f3adad6c3ec563/1610_Facies_classification/training_data.csv
 
-The selected subset contains:
+O subconjunto selecionado contém:
 
-- 12 real segments;
-- 16 samples per segment;
-- 3 facies: 2, 3 and 6;
-- 4 segments per facies;
-- 6 distinct wells;
-- 3 curves: GR, PHIND and PE;
-- a regular depth step of 0.5 within each segment.
+- 12 segmentos reais;
+- 16 amostras por segmento;
+- 3 fácies: 2, 3 e 6;
+- 4 segmentos por fácies;
+- 6 poços distintos;
+- 3 curvas: GR, PHIND e PE;
+- espaçamento regular de profundidade igual a 0,5 em cada segmento.
 
-### How the subset was chosen
+### Como o recorte foi escolhido
 
-The facies labels were used to build a small, balanced subset with three groups and four homogeneous segments per group. They are therefore used both in **subset selection** and later in **evaluation**, but never as SOM input features or training targets.
+Os rótulos de fácies foram usados para montar um subconjunto pequeno e balanceado com três grupos e quatro segmentos homogêneos por grupo. Portanto, os rótulos são usados tanto na **seleção do recorte** quanto posteriormente na **avaliação**, mas nunca são usados como atributos de entrada ou como alvos de treinamento do SOM.
 
-The starting depths were chosen pragmatically after inspecting the available homogeneous runs in the public CSV. This was not a preregistered sampling rule. The goal was to obtain a compact exercise with equal-length, regularly sampled segments.
+As profundidades iniciais foram escolhidas de forma pragmática após a inspeção dos trechos homogêneos disponíveis no CSV público. Esse critério não foi pré-registrado. O objetivo foi obter um exercício compacto, com segmentos de mesmo comprimento e amostragem regular.
 
-GR, PHIND and PE were selected because they are numeric curves available without missing values in the selected rows and keep the input dimensionality small enough for a classroom experiment.
+As curvas GR, PHIND e PE foram selecionadas porque são variáveis numéricas disponíveis sem valores ausentes nas linhas escolhidas e permitem manter a dimensionalidade pequena para um experimento de disciplina.
 
-Neighbors from the same well are allowed. The experiment describes the geometry of this fixed subset; it does not estimate performance on unseen wells.
+São permitidos vizinhos pertencentes ao mesmo poço. O experimento descreve a geometria deste conjunto fixo e não estima desempenho em poços nunca vistos.
 
-## Experimental design
+## Desenho experimental
 
-The same standardized data are represented in two ways:
+Os mesmos dados padronizados são avaliados em duas representações:
 
-1. **Original representation** — GR, PHIND and PE compared with dependent multivariate DTW.
-2. **Reduced representation** — each 3D sample is quantized by a 1D SOM with 8 neurons; the resulting scalar sequence is compared with 1D DTW.
+1. **Representação original** — curvas GR, PHIND e PE comparadas com DTW multivariado dependente.
+2. **Representação reduzida** — cada amostra 3D é quantizada por um SOM 1D com 8 neurônios; a sequência escalar resultante é comparada com DTW 1D.
 
-The SOM uses:
+O SOM utiliza:
 
-- 8 neurons;
-- 2,500 updates;
-- 30 independent initializations, using seeds 0–29.
+- 8 neurônios;
+- 2.500 atualizações;
+- 30 inicializações independentes, usando sementes de 0 a 29.
 
-The choices of 8 neurons and 2,500 updates are fixed pragmatic settings for this proof of concept. They were not optimized against the reported evaluation metrics.
+As escolhas de 8 neurônios e 2.500 atualizações são configurações pragmáticas e fixas para esta prova de conceito. Elas não foram otimizadas a partir das métricas finais do experimento.
 
-The SOM implementation uses only NumPy. It is a simple SOM-based encoding and is **not** an implementation of SOrS/IntraSOM.
+A implementação do SOM utiliza apenas NumPy. Trata-se de uma codificação simples baseada em SOM e **não** de uma implementação de SOrS/IntraSOM.
 
-## DTW definition
+## Definição do DTW
 
-DTW uses cumulative alignment cost:
+O DTW utiliza custo acumulado de alinhamento:
 
-- absolute local cost for the 1D representation;
-- Euclidean local cost for the multivariate representation;
-- no post-hoc division by warping-path length.
+- custo local absoluto para a representação 1D;
+- custo local euclidiano para a representação multivariada;
+- sem divisão posterior pelo comprimento do caminho de alinhamento.
 
-All compared segments contain 16 samples.
+Todos os segmentos comparados possuem 16 amostras.
 
-A validation script checks the symmetry of the DTW implementation, the regular depth grid of the selected data, and that tie-aware nearest-neighbor scoring is independent of input order.
+Um script de validação verifica a simetria da implementação do DTW, a regularidade da grade de profundidade dos segmentos selecionados e se o tratamento de empates na busca pelo vizinho mais próximo é independente da ordem de entrada.
 
-## Metrics
+## Métricas
 
-The metrics deliberately measure different aspects of preservation:
+As métricas foram escolhidas para medir aspectos diferentes da preservação de similaridade:
 
-- **Nearest-neighbor facies accuracy**: whether the closest segment belongs to the same facies. If multiple segments tie at the minimum distance, credit is divided equally among the tied candidates.
-- **First-neighbor agreement**: whether the first neighbor from the original representation remains among the minimum-distance neighbors after reduction. Ties are handled by uniform fractional credit rather than by identifier order.
-- **Separation ratio**: mean inter-facies distance divided by mean intra-facies distance.
-- **Pearson correlation of pairwise distances**: linear association between the 66 pairwise distances in the original and reduced spaces.
-- **Comparison runtime**: time to build the pairwise distance matrix once both representations already exist.
+- **Acurácia do vizinho mais próximo por fácies**: verifica se o segmento mais próximo pertence à mesma fácies. Quando há mais de um segmento empatado na menor distância, o crédito é dividido igualmente entre os candidatos.
+- **Concordância do primeiro vizinho**: verifica em que medida o primeiro vizinho obtido na representação original permanece entre os vizinhos de distância mínima após a redução. Empates recebem crédito fracionado uniforme, sem depender da ordem ou do identificador dos segmentos.
+- **Razão de separação**: distância média entre fácies diferentes dividida pela distância média entre segmentos da mesma fácies.
+- **Correlação de Pearson entre distâncias**: mede a associação linear entre as 66 distâncias par a par obtidas nas representações original e reduzida.
+- **Tempo de comparação**: mede o tempo necessário para construir a matriz de distâncias depois que as duas representações já estão disponíveis.
 
-The Pearson coefficient is not interpreted as a percentage of preserved similarity. Tie handling is independent of segment names and facies labels.
+O coeficiente de Pearson não deve ser interpretado como uma porcentagem de similaridade preservada. O tratamento dos empates é independente dos nomes dos segmentos e dos rótulos de fácies.
 
-## Repeated SOM runs
+## Repetições do SOM
 
-Because SOM training is stochastic, the reduced representation is evaluated across 30 seeds. Reduced-space metrics are reported as **mean ± sample standard deviation**.
+Como o treinamento do SOM possui componentes aleatórios, a representação reduzida é avaliada em 30 sementes diferentes. As métricas do espaço reduzido são apresentadas como **média ± desvio-padrão amostral**.
 
-This variation reflects SOM initialization/sampling on the same fixed dataset. It is not a confidence interval for generalization to other wells.
+Essa dispersão representa a variabilidade de inicialização e amostragem do SOM sobre o mesmo conjunto fixo de dados. Ela não representa um intervalo de confiança de generalização para outros poços.
 
-## Runtime measurement
+## Medição de tempo
 
-Runtime comparisons use the same number of repetitions for both representations. Their execution order is alternated to reduce ordering effects.
+As comparações de tempo utilizam o mesmo número de repetições para as duas representações. A ordem de execução é alternada para reduzir efeitos de ordem e carga momentânea.
 
-The benchmark covers **only the distance-matrix construction step**. SOM training and transformation are excluded, so the runtime result should be interpreted only as the cost of comparison after both representations are available.
+O benchmark mede **somente a etapa de construção da matriz de distâncias**. O treinamento e a transformação pelo SOM ficam fora do cronômetro. Assim, o resultado de tempo deve ser interpretado apenas como custo da comparação depois que as representações já estão disponíveis.
 
-## Results
+## Resultados
 
-Current results are generated automatically by the experiment and saved in:
+Os resultados atuais são gerados automaticamente pelo experimento e salvos em:
 
 - results/summary.md
 - results/metrics_summary.csv
 - results/per_seed_metrics.csv
 - results/report.html
 
-This README intentionally does not duplicate the numerical results so it cannot become stale after a methodological change.
+O README não replica os valores numéricos finais para evitar que eles fiquem desatualizados após alguma alteração metodológica.
 
-Two aggregate files deserve special attention:
+Dois arquivos agregados merecem atenção:
 
-- results/distance_matrix_reduced_mean.csv is the element-wise mean of the 30 reduced distance matrices.
-- results/nearest_neighbors_reduced_from_mean_matrix.csv is computed from that mean matrix.
+- results/distance_matrix_reduced_mean.csv contém a média elemento a elemento das 30 matrizes de distância reduzidas.
+- results/nearest_neighbors_reduced_from_mean_matrix.csv contém os vizinhos calculados a partir dessa matriz média.
 
-They are descriptive aggregates and do not represent a single SOM execution. The files distance_matrix_reduced.csv and nearest_neighbors_reduced.csv are kept only as legacy aliases of those aggregates.
+Esses arquivos são apenas agregações descritivas e não correspondem a uma única execução do SOM. Os arquivos distance_matrix_reduced.csv e nearest_neighbors_reduced.csv foram mantidos apenas como aliases legados dessas agregações.
 
-## Reproducing the experiment
+## Como reproduzir o experimento
 
-The reference environment used during revision was:
+O ambiente de referência utilizado durante a revisão foi:
 
 - Python 3.12.4
 - NumPy 2.4.6
 
-Install the pinned dependency:
+Instale a dependência fixada:
 
 ~~~bash
 pip install -r requirements.txt
 ~~~
 
-Run validation checks:
+Execute as validações:
 
 ~~~bash
 python validate_experiment.py
 ~~~
 
-Run the experiment:
+Execute o experimento:
 
 ~~~bash
 python experiment.py
 ~~~
 
-Generate/update all result files:
+Execute o experimento e atualize todos os arquivos de resultado:
 
 ~~~bash
 python experiment.py --save
 ~~~
 
-Rebuild the selected subset from the pinned public source:
+Reconstrua o subconjunto diretamente da fonte pública fixada:
 
 ~~~bash
 python prepare_data.py
 ~~~
 
-On Windows, rodar_experimento.bat runs the experiment and updates the result files.
+No Windows, o arquivo rodar_experimento.bat executa primeiro as validações e depois atualiza os resultados.
 
-## Repository structure
+## Estrutura do repositório
 
 ~~~text
 .
@@ -175,11 +175,13 @@ On Windows, rodar_experimento.bat runs the experiment and updates the result fil
     └── report.html
 ~~~
 
-## Scope and limitations
+## Escopo e limitações
 
-This is a descriptive proof of concept on a deliberately selected fixed subset. It does not use a train/test split because the question is about the geometry of this particular dataset, not predictive generalization. The conclusions should not be generalized to other basins, wells or logging configurations without additional experiments.
+Este é um experimento descritivo e de pequena escala sobre um subconjunto selecionado deliberadamente. Não há divisão treino/teste porque a pergunta estudada é sobre a geometria deste conjunto específico, e não sobre capacidade preditiva em poços novos.
 
-## References
+Os resultados não devem ser generalizados para outras bacias, outros poços ou outras configurações de perfilagem sem experimentos adicionais.
+
+## Referências
 
 - HALL, B. Facies classification using machine learning. *The Leading Edge*, 35(10), 906–909, 2016. DOI: 10.1190/tle35100906.1.
 - KOHONEN, T. *Self-Organizing Maps*. Springer, 3rd ed., 2001.
