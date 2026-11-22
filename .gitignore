@@ -6,5 +6,10 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Referências locais da disciplina/IC — não versionar
+# Referências locais da disciplina/IC e artefatos de compilação LaTeX — não versionar
 *.pdf
+*.aux
+*.log
+*.toc
+*.out
+NUL
