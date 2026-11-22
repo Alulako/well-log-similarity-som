@@ -186,3 +186,7 @@ Os resultados não devem ser generalizados para outras bacias, outros poços ou 
 - HALL, B. Facies classification using machine learning. *The Leading Edge*, 35(10), 906–909, 2016. DOI: 10.1190/tle35100906.1.
 - KOHONEN, T. *Self-Organizing Maps*. Springer, 3rd ed., 2001.
 - SAKOE, H.; CHIBA, S. Dynamic programming algorithm optimization for spoken word recognition. *IEEE Transactions on Acoustics, Speech, and Signal Processing*, 26(1), 43–49, 1978. DOI: 10.1109/TASSP.1978.1163055.
+
+## Licença
+
+O código original do experimento é disponibilizado sob a licença MIT (arquivo `LICENSE`). Os dados públicos de terceiros, incluindo a base SEG, mantêm seus próprios termos de uso; a licença MIT do código não altera esses direitos.
