@@ -1,5 +1,7 @@
 @echo off
 cd /d "%~dp0"
+python prepare_data.py
+if errorlevel 1 exit /b 1
 python validate_experiment.py
 if errorlevel 1 exit /b 1
 python experiment.py --save

@@ -17,20 +17,26 @@ EXPECTED_DEPTH_STEP = 0.5
 # Recorte pragmático para uma prova de conceito pequena.
 # Cada tupla: (segment_id, poço, fácies, profundidade inicial).
 # As fácies foram usadas deliberadamente para montar três grupos balanceados.
-SEGMENTS = [
-    ("F2_SHRIMPLIN", "SHRIMPLIN", 2, 2911.0),
-    ("F2_NEWBY", "NEWBY", 2, 3009.0),
-    ("F2_NOLAN", "NOLAN", 2, 2955.5),
-    ("F2_CROSS_H_CATTLE", "CROSS H CATTLE", 2, 2633.0),
-    ("F3_SHANKLE", "SHANKLE", 3, 2948.0),
-    ("F3_SHRIMPLIN", "SHRIMPLIN", 3, 2948.5),
-    ("F3_LUKE_G_U", "LUKE G U", 3, 2781.5),
-    ("F3_NEWBY", "NEWBY", 3, 2889.0),
-    ("F6_NEWBY", "NEWBY", 6, 3024.5),
-    ("F6_SHRIMPLIN", "SHRIMPLIN", 6, 2826.5),
-    ("F6_SHANKLE", "SHANKLE", 6, 2984.0),
-    ("F6_LUKE_G_U", "LUKE G U", 6, 2816.5),
-]
+SEGMENTS_FILE = Path("data/segment_indices.csv")
+
+
+def load_segments():
+    """Lê os índices de seleção; os valores de perfilagem vêm da fonte original."""
+    with SEGMENTS_FILE.open(encoding="utf-8", newline="") as source:
+        rows = list(csv.DictReader(source))
+    if len(rows) != 12:
+        raise ValueError("O manifesto deve conter 12 segmentos.")
+
+    segments = []
+    for row in rows:
+        start = float(row["start_depth_ft"])
+        end = float(row["end_depth_ft"])
+        samples = int(row["n_samples"])
+        if samples != EXPECTED_SAMPLES or abs(end - (start + (samples - 1) * EXPECTED_DEPTH_STEP)) > 1e-9:
+            raise ValueError(f"Intervalo inconsistente: {row['segment_id']}")
+        segments.append((row["segment_id"], row["well_name"], int(row["facies"]), start))
+    return segments
+
 
 OUTPUT_COLUMNS = [
     "segment_id",
@@ -75,7 +81,7 @@ def extract_segments(rows):
 
     selected = []
 
-    for segment_id, well_name, facies, start_depth in SEGMENTS:
+    for segment_id, well_name, facies, start_depth in load_segments():
         well_rows = by_well[well_name]
 
         start_idx = next(

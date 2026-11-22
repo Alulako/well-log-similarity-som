@@ -126,6 +126,14 @@ Instale a dependência fixada:
 pip install -r requirements.txt
 ~~~
 
+Reconstrua primeiro o recorte de 12 segmentos a partir da fonte original da SEG:
+
+~~~bash
+python prepare_data.py
+~~~
+
+O arquivo `data/segment_indices.csv` contém somente os poços, fácies e intervalos de profundidade selecionados. O script baixa a versão fixada da base e gera `data/selected_segments.csv` localmente, sem incluí-lo no controle de versão.
+
 Execute as validações:
 
 ~~~bash
@@ -144,20 +152,14 @@ Execute o experimento e atualize todos os arquivos de resultado:
 python experiment.py --save
 ~~~
 
-Reconstrua o subconjunto diretamente da fonte pública fixada:
-
-~~~bash
-python prepare_data.py
-~~~
-
-No Windows, o arquivo rodar_experimento.bat executa primeiro as validações e depois atualiza os resultados.
+No Windows, `rodar_experimento.bat` reconstrói o recorte, executa as validações e atualiza os resultados.
 
 ## Estrutura do repositório
 
 ~~~text
 .
 ├── data/
-│   └── selected_segments.csv
+│   └── segment_indices.csv
 ├── experiment.py
 ├── prepare_data.py
 ├── validate_experiment.py
@@ -189,4 +191,4 @@ Os resultados não devem ser generalizados para outras bacias, outros poços ou 
 
 ## Licença
 
-O código original do experimento é disponibilizado sob a licença MIT (arquivo `LICENSE`). Os dados públicos de terceiros, incluindo a base SEG, mantêm seus próprios termos de uso; a licença MIT do código não altera esses direitos.
+O código original do experimento é disponibilizado sob a licença MIT (arquivo `LICENSE`). Os dados de terceiros mantêm seus termos de uso: por isso, o repositório inclui apenas os índices de seleção, e os valores geofísicos são obtidos diretamente da fonte original pelo script de preparação.

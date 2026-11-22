@@ -6,6 +6,9 @@ venv/
 .DS_Store
 Thumbs.db
 
+# Recorte gerado localmente a partir da base SEG; não redistribuir dados brutos.
+data/selected_segments.csv
+
 # Referências locais da disciplina/IC e artefatos de compilação LaTeX — não versionar
 *.pdf
 *.aux
